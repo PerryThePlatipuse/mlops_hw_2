@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS scores (
+    id BIGSERIAL PRIMARY KEY,
+    transaction_id TEXT UNIQUE NOT NULL,
+    score DOUBLE PRECISION NOT NULL,
+    fraud_flag SMALLINT NOT NULL
+);

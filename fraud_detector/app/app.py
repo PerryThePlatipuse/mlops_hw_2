@@ -1,31 +1,25 @@
 import os
 import sys
 import pandas as pd
-import time
 import logging
 import json
-from datetime import datetime
 
-from confluent_kafka import Consumer, Producer, KafkaError
+from confluent_kafka import Consumer, Producer
 
 sys.path.append(os.path.abspath('./src'))
-from preprocessing import load_train_data, run_preproc
+from preprocessing import run_preproc
 from scorer import make_pred
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/app/logs/service.log'),
-        logging.StreamHandler()
-    ]
 )
 logger = logging.getLogger(__name__)
 
 # Set kafka configuration file
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 TRANSACTIONS_TOPIC = os.getenv("KAFKA_TRANSACTIONS_TOPIC", "transactions")
-SCORING_TOPIC = os.getenv("KAFKA_SCORING_TOPIC", "scoring")
+SCORING_TOPIC = os.getenv("KAFKA_SCORING_TOPIC", "scores")
 
 
 class ProcessingService:
@@ -42,9 +36,6 @@ class ProcessingService:
         self.consumer.subscribe([TRANSACTIONS_TOPIC])
         self.producer = Producer(self.producer_config)
         
-        # Загрузка данных для препроцессинга
-        self.train = load_train_data()
-
     def process_messages(self):
         while True:
             msg = self.consumer.poll(1.0)
@@ -62,16 +53,16 @@ class ProcessingService:
                 input_df = pd.DataFrame([data['data']])
 
                 # Препроцессинг и предсказание
-                processed_df = run_preproc(self.train, input_df)
-                submission = make_pred(processed_df, "kafka_stream")
+                processed_df = run_preproc(input_df)
+                submission = make_pred(processed_df)
 
                 # Добавляем ID в результат
                 submission['transaction_id'] = transaction_id
 
-                # Отправка результата в топик scoring
+                # Отправка результата в топик scores
                 self.producer.produce(
-                    'scoring',
-                    value=submission.to_json(orient='records')
+                    SCORING_TOPIC,
+                    value=submission.iloc[0].to_json()
                 )
                 self.producer.flush()
             except Exception as e:
