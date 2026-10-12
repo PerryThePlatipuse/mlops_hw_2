@@ -40,8 +40,10 @@ services:
       - |
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions --partitions 3 --replication-factor 1 --config retention.ms=604800000
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic scores --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions_clickhouse --partitions 1 --replication-factor 1
 
   fraud_detector:
+    profiles: [fraud]
     build: ./fraud_detector
     image: fraud-detector:local
     networks:
@@ -55,6 +57,7 @@ services:
         condition: service_completed_successfully
 
   postgres:
+    profiles: [fraud]
     image: postgres:16-alpine
     networks:
       - ml-scorer
@@ -71,6 +74,7 @@ services:
       retries: 10
 
   result_writer:
+    profiles: [fraud]
     image: fraud-detector:local
     command: ["python", "./app/result_writer.py"]
     networks:
@@ -84,6 +88,7 @@ services:
         condition: service_completed_successfully
 
   interface:
+    profiles: [fraud]
     build: ./interface
     networks:
       - ml-scorer
@@ -99,10 +104,50 @@ services:
     ports:
       - "8501:8501"
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8-alpine
+    networks:
+      - ml-scorer
+    environment:
+      CLICKHOUSE_USER: homework
+      CLICKHOUSE_PASSWORD: boba_aboba
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "homework", "--password", "boba_aboba", "--query", "SELECT 1"]
+      interval: 5s
+      retries: 20
+
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:25.8-alpine
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - "clickhouse-client --host clickhouse --user homework --password boba_aboba --multiquery < /schema.sql"
+    volumes:
+      - ./analytics/schema.sql:/schema.sql:ro
+    networks:
+      - ml-scorer
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+
+  csv_loader:
+    profiles: [loader]
+    build: ./analytics
+    volumes:
+      - ./data:/data:ro
+    networks:
+      - ml-scorer
+    depends_on:
+      clickhouse-init:
+        condition: service_completed_successfully
+
 networks:
   ml-scorer:
-    name: ml-scorer
     driver: bridge
 
 volumes:
   postgres_data:
+  clickhouse_data:
